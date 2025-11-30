@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+scikit-learn
+joblib
+numpy
+sentence-transformers
+pydantic
+protobuf<=3.20.3
