@@ -1,188 +1,162 @@
-import os
-# Fix for protobuf compatibility issue with TensorFlow
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
-
-from pathlib import Path
-from typing import List, Optional
-
-import joblib
-import numpy as np
-import torch
-from fastapi import FastAPI
+print("LOADING MAIN.PY REVISION 5")
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from typing import List, Optional, Dict
+from predictor import CPVPredictor
+import os
 
-# Paths
-TFIDF_MODEL_PATH = Path("models/cpv_tfidf_linearsvc.joblib")
-CPV_SEMANTIC_INDEX_PATH = Path("models/cpv_semantic_index.joblib")
-BERT_MODEL_DIR = Path("models/bertic_cpv_classifier")
+app = FastAPI(title="CPV Decoder API", description="API for predicting CPV codes from text.")
 
-app = FastAPI(
-    title="CPV Classifier API",
-    version="1.0.0",
-)
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# --- Load TF-IDF + LinearSVC model ---
-if not TFIDF_MODEL_PATH.exists():
-    raise RuntimeError(f"Missing TF-IDF model: {TFIDF_MODEL_PATH}")
+@app.get("/")
+async def read_index():
+    return FileResponse('static/index.html')
 
-tfidf_model = joblib.load(TFIDF_MODEL_PATH)
+# Global predictor instance
+predictor = None
 
-# --- Load semantic index (CPV embeddings) ---
-if not CPV_SEMANTIC_INDEX_PATH.exists():
-    raise RuntimeError(f"Missing semantic index: {CPV_SEMANTIC_INDEX_PATH}")
-
-semantic_index = joblib.load(CPV_SEMANTIC_INDEX_PATH)
-cpv_codes: List[str] = semantic_index["codes"]
-cpv_texts: List[str] = semantic_index["texts"]
-cpv_embeddings: np.ndarray = semantic_index["embeddings"]
-emb_model_name: str = semantic_index["model_name"]
-
-# Load embedding model (same as used for index)
-embedder = SentenceTransformer(emb_model_name)
-
-# --- Load BERTić CPV classifier ---
-if not BERT_MODEL_DIR.exists():
-    raise RuntimeError(f"Missing BERT model directory: {BERT_MODEL_DIR}")
-
-bert_tokenizer = AutoTokenizer.from_pretrained(str(BERT_MODEL_DIR))
-bert_model = AutoModelForSequenceClassification.from_pretrained(str(BERT_MODEL_DIR))
-label_map = joblib.load(BERT_MODEL_DIR / "label_map.joblib")
-bert_id2label = label_map["id2label"]
-bert_model.eval()
-
-
-class PredictRequest(BaseModel):
+class PredictionRequest(BaseModel):
     text: str
-    top_k: Optional[int] = 5
 
+class MatchResult(BaseModel):
+    cpv_code: str
+    name: str
 
-class SemanticCandidate(BaseModel):
-    cpv: str
-    label_text: str
-    score: float
+class ScoredResult(BaseModel):
+    cpv_code: str
+    name: str
+    score: Optional[float] = None
+    probability: Optional[float] = None
 
-
-class TfidfResponse(BaseModel):
-    cpv: str
-
-
-class SemanticResponse(BaseModel):
-    best: SemanticCandidate
-    top_k: List[SemanticCandidate]
-
-
-class EnsembleResponse(BaseModel):
-    tfidf_cpv: str
-    semantic_best: SemanticCandidate
-    final_cpv: str
-    note: str
-
-
-class BertResponse(BaseModel):
-    cpv: str
+class FinalDecision(BaseModel):
+    cpv_code: str
+    name: str
     confidence: float
+    sources: List[str]
 
+class PredictionResponse(BaseModel):
+    keyword_matches: List[MatchResult]
+    rag_matches: List[ScoredResult]
+    model_predictions: List[ScoredResult]
+    final_decision: List[FinalDecision]
+
+@app.on_event("startup")
+async def startup_event():
+    global predictor
+    try:
+        cwd = os.getcwd()
+        print(f"DEBUG: CWD is {cwd}")
+        print(f"DEBUG: Directory contents: {os.listdir(cwd)}")
+        
+        # Check enviroment variables or default paths
+        # Force absolute paths
+        model_dir = os.path.join(cwd, "models", "cpv-decoder")
+        cpv_codes = os.path.join(cwd, "cpv_codes.csv")
+        embeddings_file = os.path.join(cwd, "cpv_embeddings.pt")
+        
+        print(f"DEBUG: Checking model_dir: {model_dir}")
+        
+        # Fallback to test model if main doesn't exist (for development)
+        if not os.path.exists(model_dir):
+            test_dir = os.path.join(cwd, "models", "cpv-decoder-test")
+            if os.path.exists(test_dir):
+                print("Warning: Main model not found, falling back to test model.")
+                model_dir = test_dir
+            else:
+                print(f"ERROR: Model dir not found at {model_dir} or {test_dir}")
+
+        print(f"Loading resources from: {model_dir}")
+        predictor = CPVPredictor(
+            model_dir=model_dir, 
+            cpv_codes_path=cpv_codes, 
+            embeddings_path=embeddings_file
+        )
+        print("Predictor initialized successfully.")
+    except Exception as e:
+        print(f"CRITICAL ERROR in startup: {e}")
+        import traceback
+        traceback.print_exc()
 
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+async def health_check():
+    if predictor and predictor.model:
+        return {"status": "healthy", "model_loaded": True}
+    return {"status": "unhealthy", "model_loaded": False}
 
-
-@app.post("/predict/tfidf", response_model=TfidfResponse)
-def predict_tfidf(payload: PredictRequest):
-    text = payload.text.strip()
-    cpv_code = tfidf_model.predict([text])[0]
-    return TfidfResponse(cpv=cpv_code)
-
-
-def _semantic_search(text: str, top_k: int = 5) -> List[SemanticCandidate]:
-    if top_k <= 0:
-        top_k = 5
-
-    emb = embedder.encode(
-        [text],
-        normalize_embeddings=True,
-    )[0]
-
-    scores = np.dot(cpv_embeddings, emb)  # cosine similarity (normalized)
-    top_idx = np.argsort(-scores)[:top_k]
-
-    candidates: List[SemanticCandidate] = []
-    for idx in top_idx:
-        candidates.append(
-            SemanticCandidate(
-                cpv=cpv_codes[int(idx)],
-                label_text=cpv_texts[int(idx)],
-                score=float(scores[int(idx)]),
-            )
-        )
-    return candidates
-
-
-@app.post("/predict/semantic", response_model=SemanticResponse)
-def predict_semantic(payload: PredictRequest):
-    text = payload.text.strip()
-    candidates = _semantic_search(text, top_k=payload.top_k or 5)
-    best = candidates[0]
-    return SemanticResponse(best=best, top_k=candidates)
-
-
-@app.post("/predict/ensemble", response_model=EnsembleResponse)
-def predict_ensemble(payload: PredictRequest):
-    text = payload.text.strip()
-
-    # 1) TF-IDF
-    tfidf_cpv = tfidf_model.predict([text])[0]
-
-    # 2) Semantic
-    candidates = _semantic_search(text, top_k=payload.top_k or 5)
-    best = candidates[0]
-
-    # Jednostavno pravilo spajanja:
-    # - ako se TF-IDF i semantic poklapaju -> uzmi taj CPV
-    # - ako se ne poklapaju:
-    #     - ako je semantic score jako visok (npr. > 0.6), daj semantic,
-    #       inače TF-IDF, ali vrati oba za referencu
-    if tfidf_cpv == best.cpv:
-        final_cpv = tfidf_cpv
-        note = "TF-IDF and semantic agree."
-    else:
-        if best.score >= 0.60:
-            final_cpv = best.cpv
-            note = "Semantic overriden TF-IDF (high similarity)."
+@app.get("/debug_load")
+async def debug_load():
+    debug_info = {}
+    try:
+        import sys
+        cwd = os.getcwd()
+        debug_info["cwd"] = cwd
+        debug_info["dir_contents"] = os.listdir(cwd)
+        debug_info["model_dir_env"] = os.getenv("MODEL_DIR")
+        
+        # Check specific paths
+        model_path = os.path.join(cwd, "models", "cpv-decoder")
+        debug_info["model_path_absolute"] = model_path
+        debug_info["model_path_exists"] = os.path.exists(model_path)
+        
+        if os.path.exists(model_path):
+             debug_info["model_dir_contents"] = os.listdir(model_path)
+        
+        # Manually trigger load
+        if predictor:
+            debug_info["predictor_id"] = id(predictor)
+            debug_info["predictor_model_dir"] = predictor.model_dir
+            debug_info["predictor_model_dir_exists"] = os.path.exists(predictor.model_dir)
+            
+            predictor._load_resources()
+            debug_info["load_status"] = "Resources reloaded"
+            debug_info["model_loaded"] = predictor.model is not None
+            debug_info["model_type"] = str(type(predictor.model))
+            debug_info["cpv_codes_len"] = len(predictor.cpv_descriptions)
         else:
-            final_cpv = tfidf_cpv
-            note = "TF-IDF used; semantic only as suggestion."
+            debug_info["error"] = "Predictor instance is None"
+            
+    except Exception as e:
+        debug_info["exception"] = str(e)
+        import traceback
+        debug_info["traceback"] = traceback.format_exc()
+        
+    return debug_info
 
-    return EnsembleResponse(
-        tfidf_cpv=tfidf_cpv,
-        semantic_best=best,
-        final_cpv=final_cpv,
-        note=note,
-    )
+@app.post("/predict", response_model=PredictionResponse)
+async def predict_cpv(request: PredictionRequest):
+    if not predictor:
+        raise HTTPException(status_code=503, detail="Predictor not initialized")
+    
+    try:
+        raw_results = predictor.predict(request.text)
+        
+        # Transform to Pydantic models
+        response = PredictionResponse(
+            keyword_matches=[
+                MatchResult(cpv_code=r['cpv_code'], name=r['name'])
+                for r in raw_results['keyword_matches']
+            ],
+            rag_matches=[
+                ScoredResult(cpv_code=r['cpv_code'], name=r['name'], score=r['score']) 
+                for r in raw_results['rag_matches']
+            ],
+            model_predictions=[
+                ScoredResult(cpv_code=r['cpv_code'], name=r['name'], probability=r['probability']) 
+                for r in raw_results['model_predictions']
+            ],
+            final_decision=[
+                FinalDecision(cpv_code=r['cpv_code'], name=r['name'], confidence=r['confidence'], sources=r['sources'])
+                for r in raw_results['final_decision']
+            ]
+        )
+        return response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.post("/predict/bert", response_model=BertResponse)
-def predict_bert(payload: PredictRequest):
-    text = payload.text.strip()
-
-    enc = bert_tokenizer(
-        text,
-        truncation=True,
-        padding="max_length",
-        max_length=64,
-        return_tensors="pt",
-    )
-
-    with torch.no_grad():
-        outputs = bert_model(**enc)
-        logits = outputs.logits
-        probs = torch.softmax(logits, dim=-1)
-        conf, pred_id = torch.max(probs, dim=-1)
-
-    cpv_code = bert_id2label[int(pred_id.item())]
-    confidence = float(conf.item())
-
-    return BertResponse(cpv=cpv_code, confidence=confidence)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Training data (too large for container)
+training_data.csv
+
+# Logs
+*.log
+server.log
+
+# Development scripts
+analyze_data.py
+check_coverage.py
+debug_startup.py
+evaluate.py
+train.py
+prepare_training_data.py
+
+# Documentation
+RUNPOD_GUIDE.md
+README.md
+
+# OS
+.DS_Store
+Thumbs.db

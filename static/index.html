@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPV Decoder - AI Powered</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap');
+
+        :root {
+            --primary: #6366f1;
+            --secondary: #ec4899;
+            --accent: #8b5cf6;
+            --success: #10b981;
+            --glass: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --text-main: #ffffff;
+            --text-muted: #cbd5e1;
+            --card-bg: rgba(0, 0, 0, 0.2);
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Outfit', sans-serif;
+            background: #0f172a;
+            background-image:
+                radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 1) 0, transparent 50%),
+                radial-gradient(at 50% 0%, hsla(225, 39%, 30%, 1) 0, transparent 50%),
+                radial-gradient(at 100% 0%, hsla(339, 49%, 30%, 1) 0, transparent 50%);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow-x: hidden;
+            padding: 2rem 0;
+        }
+
+        /* Ambient Blobs */
+        .blob {
+            position: absolute;
+            background: var(--primary);
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.4;
+            z-index: -1;
+            animation: float 10s infinite ease-in-out;
+        }
+
+        .blob-1 {
+            top: 10%;
+            left: 20%;
+            width: 300px;
+            height: 300px;
+            background: var(--secondary);
+        }
+
+        .blob-2 {
+            bottom: 20%;
+            right: 10%;
+            width: 250px;
+            height: 250px;
+            background: var(--accent);
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translate(0, 0);
+            }
+
+            50% {
+                transform: translate(20px, -20px);
+            }
+        }
+
+        .container {
+            width: 90%;
+            max-width: 900px;
+            padding: 2rem;
+            background: var(--glass);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            margin-top: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            text-align: center;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(to right, #c084fc, #6366f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        p.subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            font-weight: 300;
+        }
+
+        .input-group {
+            margin-bottom: 2rem;
+            position: relative;
+        }
+
+        textarea {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 1rem;
+            color: white;
+            font-family: inherit;
+            font-size: 1rem;
+            resize: vertical;
+            min-height: 80px;
+            transition: all 0.3s ease;
+            box-sizing: border-box;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.3);
+        }
+
+        button {
+            display: block;
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-weight: 600;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(99, 102, 241, 0.4);
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
+
+        button.loading {
+            opacity: 0.7;
+            cursor: wait;
+        }
+
+        /* Results Sections */
+        .results-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            margin-top: 2rem;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.5s ease;
+        }
+
+        .results-container.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .result-section {
+            background: var(--card-bg);
+            border-radius: 16px;
+            border: 1px solid var(--glass-border);
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .result-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 4px;
+        }
+
+        .section-keyword::before {
+            background: var(--success);
+        }
+
+        .section-rag::before {
+            background: var(--primary);
+        }
+
+        .section-model::before {
+            background: var(--secondary);
+        }
+
+        .section-final::before {
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+        }
+
+        .section-final {
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.1), rgba(245, 158, 11, 0.1));
+            border: 2px solid rgba(251, 191, 36, 0.3);
+            box-shadow: 0 8px 32px rgba(251, 191, 36, 0.2);
+        }
+
+        .section-final .section-header {
+            font-size: 1.3rem;
+            color: #fbbf24;
+        }
+
+        .section-final .cpv-code {
+            font-size: 1.1rem;
+            color: #fbbf24;
+        }
+
+        .confidence-bar {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #fbbf24, #f59e0b);
+            transition: width 0.5s ease;
+        }
+
+        .sources-badges {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .source-badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-keyword {
+            background: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-rag {
+            background: rgba(99, 102, 241, 0.2);
+            color: #6366f1;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+
+        .badge-model {
+            background: rgba(236, 72, 153, 0.2);
+            color: #ec4899;
+            border: 1px solid rgba(236, 72, 153, 0.3);
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .icon {
+            font-size: 1.2rem;
+        }
+
+        .result-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .code-col {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+
+        .cpv-code {
+            font-family: 'Courier New', monospace;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: var(--accent);
+        }
+
+        .cpv-name {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+        }
+
+        .score-col {
+            text-align: right;
+            font-size: 0.9rem;
+            font-weight: 600;
+            min-width: 60px;
+        }
+
+        .empty-message {
+            color: var(--text-muted);
+            font-style: italic;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+
+    <div class="container">
+        <h1>CPV Decoder</h1>
+        <p class="subtitle">Enter a product or service description to find the correct CPV code.</p>
+
+        <div class="input-group">
+            <textarea id="inputText" placeholder="e.g. Toneri za laserske štampače..."></textarea>
+        </div>
+
+        <button id="predictBtn" onclick="predict()">Decode CPV</button>
+
+        <div id="resultsContainer" class="results-container">
+
+            <!-- FINAL DECISION (Top Priority) -->
+            <div class="result-section section-final">
+                <div class="section-header">
+                    <span class="icon">🎯</span> FINAL DECISION (Aggregated)
+                </div>
+                <div id="finalList">
+                    <!-- Items -->
+                </div>
+            </div>
+
+            <!-- 1. Keyword Matches -->
+            <div class="result-section section-keyword">
+                <div class="section-header">
+                    <span class="icon">✨</span> Keyword Match
+                </div>
+                <div id="keywordList">
+                    <!-- Items -->
+                </div>
+            </div>
+
+            <!-- 2. Semantic RAG -->
+            <div class="result-section section-rag">
+                <div class="section-header">
+                    <span class="icon">🔍</span> Semantic RAG
+                </div>
+                <div id="ragList">
+                    <!-- Items -->
+                </div>
+            </div>
+
+            <!-- 3. AI Model -->
+            <div class="result-section section-model">
+                <div class="section-header">
+                    <span class="icon">🧠</span> AI Model Prediction
+                </div>
+                <div id="modelList">
+                    <!-- Items -->
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        async function predict() {
+            const text = document.getElementById('inputText').value;
+            const btn = document.getElementById('predictBtn');
+            const container = document.getElementById('resultsContainer');
+
+            if (!text.trim()) return;
+
+            // UI Loading State
+            btn.innerText = "Decoding...";
+            btn.classList.add('loading');
+            container.classList.remove('visible');
+
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+
+                const data = await response.json();
+
+                // Helper to render lists
+                const renderList = (elementId, items, scoreKey) => {
+                    const el = document.getElementById(elementId);
+                    el.innerHTML = '';
+
+                    if (!items || items.length === 0) {
+                        el.innerHTML = '<div class="empty-message">No matches found.</div>';
+                        return;
+                    }
+
+                    items.forEach(item => {
+                        let scoreDisp = '';
+                        if (scoreKey && item[scoreKey] !== undefined) {
+                            scoreDisp = (item[scoreKey] * 100).toFixed(1) + '%';
+                        }
+
+                        const div = document.createElement('div');
+                        div.className = 'result-item';
+                        div.innerHTML = `
+                            <div class="code-col">
+                                <span class="cpv-code">${item.cpv_code}</span>
+                                <span class="cpv-name">${item.name}</span>
+                            </div>
+                            <div class="score-col">${scoreDisp}</div>
+                        `;
+                        el.appendChild(div);
+                    });
+                };
+
+                // 1. Final Decision (NEW)
+                const renderFinalDecision = (items) => {
+                    const el = document.getElementById('finalList');
+                    el.innerHTML = '';
+
+                    if (!items || items.length === 0) {
+                        el.innerHTML = '<div class="empty-message">No final decision available.</div>';
+                        return;
+                    }
+
+                    items.forEach((item, index) => {
+                        const confidencePercent = (item.confidence * 100).toFixed(1);
+
+                        const sourceBadges = item.sources.map(source => {
+                            const badgeClass = `badge-${source}`;
+                            return `<span class="source-badge ${badgeClass}">${source}</span>`;
+                        }).join('');
+
+                        const div = document.createElement('div');
+                        div.className = 'result-item';
+                        div.innerHTML = `
+                            <div class="code-col" style="flex: 1;">
+                                <span class="cpv-code">${item.cpv_code}</span>
+                                <span class="cpv-name">${item.name}</span>
+                                <div class="confidence-bar">
+                                    <div class="confidence-fill" style="width: ${confidencePercent}%"></div>
+                                </div>
+                                <div class="sources-badges">
+                                    ${sourceBadges}
+                                </div>
+                            </div>
+                            <div class="score-col" style="font-size: 1.1rem; color: #fbbf24;">${confidencePercent}%</div>
+                        `;
+                        el.appendChild(div);
+                    });
+                };
+
+                // Render Final Decision First
+                renderFinalDecision(data.final_decision);
+
+                // 2. Keyword
+                renderList('keywordList', data.keyword_matches, null); // No score for keywords usually
+
+                // 3. RAG
+                renderList('ragList', data.rag_matches, 'score');
+
+                // 4. Model
+                renderList('modelList', data.model_predictions, 'probability');
+
+                container.classList.add('visible');
+
+            } catch (error) {
+                console.error('Error:', error);
+                alert('An error occurred during prediction. Check console for details.');
+            } finally {
+                btn.innerText = "Decode CPV";
+                btn.classList.remove('loading');
+            }
+        }
+    </script>
+</body>
+
+</html>
